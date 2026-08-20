@@ -4,7 +4,8 @@
 export const initialUsers = [
   { id: 1, username: 'admin', password: 'admin123', role: 'admin', nom: 'Administrateur Principal', avatar: '👨‍💼' },
   { id: 2, username: 'user1', password: 'user123', role: 'user', nom: 'Jean Kamga', avatar: '👤' },
-  { id: 3, username: 'user2', password: 'user123', role: 'user', nom: 'Marie Fotso', avatar: '👩' }
+  { id: 3, username: 'user2', password: 'user123', role: 'user', nom: 'Marie Fotso', avatar: '👩' },
+  { id: 4, username: 'chinang', password: '1512203', role: 'user', nom: 'Chinang Pariss', avatar: '👩' }
 ]
 
 export const initialParametres = {
@@ -19,8 +20,8 @@ export const initialParametres = {
   joursReunion: 'Premier dimanche du mois',
   heureReunion: '14:00',
   lieuReunion: 'Siège social - Douala',
-  telephone: '+237 6 99 88 77 66',
-  email: 'contact@tontine-solidarite.cm'
+  telephone: '+237 6 88 50 67 46',
+  email: 'fotofranckzephyin@gmail.com'
 }
 
 export const initialReglement = {

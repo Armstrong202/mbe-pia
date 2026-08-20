@@ -209,7 +209,7 @@ const TontineApp = () => {
 
 
           <div className="mt-6 text-center text-xs text-gray-500">
-            <p>Tout droit reserver• © 2026 MBE-PIA </p>
+            <p>Tout droit reserver• © 2026 AMSTRONG ZEPH </p>
           </div>
         </div>
       </div>

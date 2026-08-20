@@ -1,11 +1,15 @@
+// utils/supabase/client.js
+
 import { createClient } from '@supabase/supabase-js'
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://kmtjncjuxptrllvkjfxk.supabase.co'
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_-dHrHQIwqSJe_r9eBIQ0SA_StaE28NO'
+// ⚠️ Valeurs fictives — à remplacer par tes vraies clés
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "https://kmtjncjuxptrllvkjfxk.supabase.co"
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || "sb_publishable_-dHrHQIwqSJe_r9eBIQ0SA_StaE28NO"
 
+// Création du client Supabase côté navigateur
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)
 
-// Database table names
+// Tables utilisées dans ton projet
 export const TABLES = {
   USERS: 'users',
   MEMBRES: 'membres',
@@ -18,7 +22,7 @@ export const TABLES = {
   REGLEMENT: 'reglement'
 }
 
-// Check if Supabase is configured
+// Vérification que Supabase est bien configuré
 export const isSupabaseConfigured = () => {
-  return import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY
+  return Boolean(supabaseUrl && supabaseAnonKey)
 }
