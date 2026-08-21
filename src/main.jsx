@@ -1,3 +1,5 @@
+// src/main.jsx
+
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -6,22 +8,22 @@ import './index.css'
 
 /**
  * Configuration du client React Query
- * Optimisé pour une application financière / SaaS (Tontine)
+ * Optimisé pour une application financière / SaaS (Tontine MBE-PIA)
  */
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       staleTime: 1000 * 60 * 5, // Les données sont considérées fraîches pendant 5 min
       gcTime: 1000 * 60 * 30, // Conserve le cache en mémoire pendant 30 min
-      retry: 2, // Re-tente 2 fois en cas de micro-coupure réseau (4G/Mobile)
-      refetchOnWindowFocus: false, // Évite d'inonder le backend lors des changements d'onglets
+      retry: 2, // Re-tente 2 fois en cas de coupure réseau
+      refetchOnWindowFocus: false, // Évite d'inonder le backend au changement d'onglet
     },
   },
 })
 
 /**
  * Composant de secours (Error Boundary)
- * Capture les erreurs non gérées dans React et affiche une UI propre au lieu d'une page blanche
+ * Capture les erreurs non gérées dans React et évite l'écran blanc
  */
 class ErrorBoundary extends React.Component {
   constructor(props) {
