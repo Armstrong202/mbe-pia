@@ -8,3 +8,7 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_KEY
 
 // Création du client Supabase
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+
+
+
+
