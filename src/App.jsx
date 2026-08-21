@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
-// Importation du client Supabase depuis votre fichier existant
-import { supabase } from './utils/supabase/client';
+import { supabase } from './supabase/client';
 
 export default function App() {
   const [membres, setMembres] = useState([]);
@@ -21,6 +20,12 @@ export default function App() {
     setLoading(true);
     setErrorMessage('');
 
+    if (!supabase) {
+      setErrorMessage("Configuration Supabase manquante dans les variables d'environnement.");
+      setLoading(false);
+      return;
+    }
+
     const { data, error } = await supabase
       .from('membres')
       .select('*')
@@ -40,30 +45,31 @@ export default function App() {
     e.preventDefault();
     if (!nom.trim()) return;
 
+    if (!supabase) {
+      setErrorMessage("Impossible d'ajouter un membre : Supabase non configuré.");
+      return;
+    }
+
     setErrorMessage('');
 
-    // Données envoyées à Supabase
     const nouveauMembre = {
       nom: nom,
       email: email,
       role: role || 'Membre'
     };
 
-    // Insertion en base de données
     const { data, error } = await supabase
       .from('membres')
       .insert([nouveauMembre])
       .select();
 
-    // Gestion d'erreur (si RLS bloqué ou colonne manquante)
     if (error) {
       console.error("Erreur d'insertion Supabase:", error);
       setErrorMessage(`ÉCHEC SUPABASE : ${error.message}`);
       alert(`Erreur Supabase : ${error.message}`);
-      return; // Bloque la mise à jour si Supabase a refusé l'enregistrement
+      return;
     }
 
-    // Mise à jour de l'affichage seulement en cas de succès Supabase
     if (data && data.length > 0) {
       setMembres((prevMembres) => [data[0], ...prevMembres]);
       setNom('');
@@ -76,7 +82,7 @@ export default function App() {
     <div style={{ maxWidth: '650px', margin: '30px auto', padding: '20px', fontFamily: 'sans-serif' }}>
       <h1>Gestion des Membres</h1>
 
-      {/* Message d'erreur visible si Supabase échoue */}
+      {/* Message d'erreur visible si Supabase échoue ou est mal configuré */}
       {errorMessage && (
         <div style={{ padding: '12px', backgroundColor: '#fee2e2', color: '#991b1b', borderRadius: '6px', marginBottom: '20px' }}>
           <strong>Erreur :</strong> {errorMessage}
