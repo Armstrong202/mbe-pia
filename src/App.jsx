@@ -1,557 +1,300 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabase/client';
+import { 
+  Users, Wallet, PiggyBank, Award, Bell, Sun, Moon, 
+  TrendingUp, Shield, LogOut, PlusCircle, CheckCircle, AlertTriangle 
+} from 'lucide-react';
 
 export default function App() {
   const [session, setSession] = useState(null);
-  const [authLoading, setAuthLoading] = useState(true);
-  const [currentUser, setCurrentUser] = useState(null);
+  const [darkMode, setDarkMode] = useState(() => localStorage.getItem('theme') === 'dark');
   const [activeTab, setActiveTab] = useState('dashboard');
-
-  // Données
-  const [membres, setMembres] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [errorMessage, setErrorMessage] = useState('');
-  const [successMessage, setSuccessMessage] = useState('');
-  const [submitting, setSubmitting] = useState(false);
 
-  // Formulaire Membre / Accès
-  const [nom, setNom] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [telephone, setTelephone] = useState('');
-  const [profession, setProfession] = useState('');
-  const [cotisationMensuelle, setCotisationMensuelle] = useState('');
-  const [statut, setStatut] = useState('actif');
+  // Données BDD
+  const [membres, setMembres] = useState([]);
+  const [cotisations, setCotisations] = useState([]);
+  const [prets, setPrets] = useState([]);
+  const [currentUser, setCurrentUser] = useState(null);
 
-  // Connexion
+  // Formulaires
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
   const [authError, setAuthError] = useState('');
 
-  // 1. Initialisation Session & Droits
+  // Formulaire Membre
+  const [nom, setNom] = useState('');
+  const [email, setEmail] = useState('');
+  const [role, setRole] = useState('Membre');
+  const [cotisationMensuelle, setCotisationMensuelle] = useState('');
+
+  // Formulaire Cotisation & Prêt
+  const [selectedMembreCot, setSelectedMembreCot] = useState('');
+  const [montantCot, setMontantCot] = useState('');
+  const [moisCot, setMoisCot] = useState(new Date().toISOString().substring(0, 7));
+  
+  const [selectedMembrePret, setSelectedMembrePret] = useState('');
+  const [montantPret, setMontantPret] = useState('');
+  const [tauxPret, setTauxPret] = useState('5');
+
+  // Dark Mode Toggle
   useEffect(() => {
-    if (!supabase) {
-      setAuthLoading(false);
-      return;
+    if (darkMode) {
+      document.documentElement.classList.add('dark');
+      localStorage.setItem('theme', 'dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+      localStorage.setItem('theme', 'light');
     }
+  }, [darkMode]);
+
+  // Auth Supabase Init
+  useEffect(() => {
+    if (!supabase) { setLoading(false); return; }
 
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
-      if (session) fetchUserProfile(session.user);
-      setAuthLoading(false);
+      setLoading(false);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
-      if (session) {
-        fetchUserProfile(session.user);
-      } else {
-        setCurrentUser(null);
-      }
-      setAuthLoading(false);
+      setLoading(false);
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
-  const fetchUserProfile = async (user) => {
-    const { data, error } = await supabase
-      .from('membres')
-      .select('*')
-      .or(`user_id.eq.${user.id},email.eq.${user.email}`)
-      .maybeSingle();
-
-    if (!error && data) {
-      setCurrentUser(data);
-    } else {
-      setCurrentUser({
-        email: user.email,
-        statut: 'Membre',
-        nom: user.user_metadata?.nom || 'Adhérent'
-      });
-    }
-  };
-
-  // 2. Chargement du répertoire tontine
+  // Fetch Data
   useEffect(() => {
     if (session) {
-      fetchMembres();
+      loadData();
     }
   }, [session]);
 
-  const fetchMembres = async () => {
+  const loadData = async () => {
     setLoading(true);
-    setErrorMessage('');
+    const resMembres = await supabase.from('membres').select('*').order('created_at', { ascending: false });
+    const resCot = await supabase.from('cotisations').select('*, membres(nom)').order('date_paiement', { ascending: false });
+    const resPrets = await supabase.from('prets').select('*, membres(nom)').order('date_octroi', { ascending: false });
 
-    const { data, error } = await supabase
-      .from('membres')
-      .select('*')
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      setErrorMessage(`Impossible de charger les données : ${error.message}`);
-    } else {
-      setMembres(data || []);
-    }
+    if (resMembres.data) setMembres(resMembres.data);
+    if (resCot.data) setCotisations(resCot.data);
+    if (resPrets.data) setPrets(resPrets.data);
     setLoading(false);
   };
 
   const handleLogin = async (e) => {
     e.preventDefault();
     setAuthError('');
-    setSubmitting(true);
     const { error } = await supabase.auth.signInWithPassword({
       email: authEmail,
-      password: authPassword,
+      password: authPassword
     });
     if (error) setAuthError(error.message);
-    setSubmitting(false);
   };
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-  };
-
-  // 3. Inscription membre + Génération accès Auth par Super Admin / Admin
-  const handleAddMembreAndCreateAccess = async (e) => {
+  const handleAddMembre = async (e) => {
     e.preventDefault();
-    const isAdmin = currentUser?.statut === 'Administrateur' || currentUser?.statut === 'admin' || currentUser?.statut === 'super_admin';
+    const { data, error } = await supabase.from('membres').insert([{
+      nom, email, role, cotisation_mensuelle: parseFloat(cotisationMensuelle) || 0
+    }]).select();
 
-    if (!isAdmin) {
-      alert("Seul un Administrateur peut inscrire un membre.");
-      return;
-    }
-
-    setErrorMessage('');
-    setSuccessMessage('');
-    setSubmitting(true);
-
-    try {
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: email.trim(),
-        password: password.trim(),
-        options: {
-          data: { nom: nom, role: statut }
-        }
-      });
-
-      if (authError) throw new Error(`Erreur Auth : ${authError.message}`);
-
-      const createdUserId = authData.user ? authData.user.id : null;
-
-      const nouveauMembre = {
-        user_id: createdUserId,
-        nom,
-        email: email.trim(),
-        telephone: telephone.trim() || null,
-        profession: profession.trim() || null,
-        cotisation_mensuelle: cotisationMensuelle ? parseFloat(cotisationMensuelle) : 0,
-        statut: statut || 'actif'
-      };
-
-      const { data, error: dbError } = await supabase
-        .from('membres')
-        .insert([nouveauMembre])
-        .select();
-
-      if (dbError) throw new Error(`Erreur Base de données : ${dbError.message}`);
-
-      if (data && data.length > 0) {
-        setMembres((prev) => [data[0], ...prev]);
-        setSuccessMessage(`Membre "${nom}" créé avec succès ! Identifiants d'accès activés.`);
-        setNom('');
-        setEmail('');
-        setPassword('');
-        setTelephone('');
-        setProfession('');
-        setCotisationMensuelle('');
-        setStatut('actif');
-      }
-    } catch (err) {
-      setErrorMessage(err.message);
-    } finally {
-      setSubmitting(false);
+    if (!error && data) {
+      setMembres([data[0], ...membres]);
+      setNom(''); setEmail(''); setCotisationMensuelle('');
     }
   };
 
-  // Calculs Dashboard
-  const totalCotisationsMensuelles = membres.reduce((sum, m) => sum + (Number(m.cotisation_mensuelle) || 0), 0);
-  const userRole = currentUser?.statut || 'Membre';
-  const isAdmin = userRole === 'Administrateur' || userRole === 'admin' || userRole === 'super_admin';
+  const handleAddCotisation = async (e) => {
+    e.preventDefault();
+    const { data, error } = await supabase.from('cotisations').insert([{
+      membre_id: selectedMembreCot,
+      montant: parseFloat(montantCot),
+      mois: moisCot
+    }]).select('*, membres(nom)');
 
-  if (authLoading) {
-    return (
-      <div style={styles.centerContainer}>
-        <div style={styles.spinner}></div>
-        <p style={{ color: '#64748b', marginTop: '16px' }}>Chargement de MBE-PIA SaaS...</p>
-      </div>
-    );
-  }
+    if (!error && data) {
+      setCotisations([data[0], ...cotisations]);
+      setMontantCot('');
+    }
+  };
 
-  // --- ECRAN 1 : CONNEXION OAUTH / EMAIL ---
+  const handleAddPret = async (e) => {
+    e.preventDefault();
+    const { data, error } = await supabase.from('prets').insert([{
+      membre_id: selectedMembrePret,
+      montant: parseFloat(montantPret),
+      taux_interet: parseFloat(tauxPret)
+    }]).select('*, membres(nom)');
+
+    if (!error && data) {
+      setPrets([data[0], ...prets]);
+      setMontantPret('');
+    }
+  };
+
+  const totalCotisations = cotisations.reduce((acc, c) => acc + (Number(c.montant) || 0), 0);
+  const totalPrets = prets.reduce((acc, p) => acc + (Number(p.montant) || 0), 0);
+
   if (!session) {
     return (
-      <div style={styles.authWrapper}>
-        <div style={styles.authCard}>
-          <div style={{ textAlign: 'center', marginBottom: '28px' }}>
-            <div style={styles.logoBadge}>MBE</div>
-            <h1 style={styles.authTitle}>MBE-PIA</h1>
-            <p style={styles.authSubtitle}>SaaS de Gestion Professionnelle de Tontine</p>
-          </div>
-
-          {authError && <div style={styles.errorBanner}>⚠️ {authError}</div>}
-
-          <form onSubmit={handleLogin} style={styles.formGrid}>
-            <div>
-              <label style={styles.label}>Adresse e-mail</label>
-              <input
-                type="email"
-                placeholder="ex: admin@tontine.com"
-                value={authEmail}
-                onChange={(e) => setAuthEmail(e.target.value)}
-                required
-                style={styles.input}
-              />
+      <div className="min-h-screen bg-slate-100 dark:bg-slate-900 flex items-center justify-center p-4 transition-colors">
+        <div className="w-full max-w-md bg-white dark:bg-slate-800 p-8 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700">
+          <div className="flex justify-between items-center mb-6">
+            <div className="flex items-center gap-2">
+              <div className="w-10 h-10 bg-emerald-600 text-white font-bold rounded-xl flex items-center justify-center text-lg shadow-lg">MBE</div>
+              <span className="text-xl font-extrabold text-slate-800 dark:text-white">MBE-PIA</span>
             </div>
-            <div>
-              <label style={styles.label}>Mot de passe</label>
-              <input
-                type="password"
-                placeholder="••••••••"
-                value={authPassword}
-                onChange={(e) => setAuthPassword(e.target.value)}
-                required
-                style={styles.input}
-              />
-            </div>
-            <button
-              type="submit"
-              disabled={submitting}
-              style={{ ...styles.primaryBtn, opacity: submitting ? 0.7 : 1 }}
-            >
-              {submitting ? 'Connexion en cours...' : 'Se connecter'}
+            <button onClick={() => setDarkMode(!darkMode)} className="p-2 text-slate-500 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700">
+              {darkMode ? <Sun size={20} className="text-yellow-400" /> : <Moon size={20} />}
             </button>
+          </div>
+          <h2 className="text-2xl font-bold text-slate-800 dark:text-white mb-2">Espace Connexion</h2>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">Plateforme SaaS de Gestion de Tontine</p>
+
+          {authError && <div className="mb-4 p-3 bg-red-100 border border-red-300 text-red-700 text-sm rounded-xl">{authError}</div>}
+
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Email</label>
+              <input type="email" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} required className="input-field" placeholder="admin@tontine.com" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Mot de passe</label>
+              <input type="password" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} required className="input-field" placeholder="••••••••" />
+            </div>
+            <button type="submit" className="btn-primary w-full mt-2">Se connecter</button>
           </form>
-          <p style={{ textAlign: 'center', fontSize: '12px', color: '#94a3b8', marginTop: '20px' }}>
-            Les accès sont attribués par le Super Admin de la tontine.
-          </p>
         </div>
       </div>
     );
   }
 
-  // --- ECRAN 2 : PLATEFORME MBE-PIA ---
   return (
-    <div style={styles.dashboardWrapper}>
-      {/* HEADER PRINCIPAL */}
-      <header style={styles.header}>
-        <div style={styles.headerContent}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <div style={styles.logoBadgeSmall}>MBE</div>
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 transition-colors">
+      {/* Navbar */}
+      <header className="bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-emerald-600 text-white font-bold rounded-xl flex items-center justify-center shadow-lg">MBE</div>
             <div>
-              <h1 style={styles.headerTitle}>MBE-PIA Tontine</h1>
-              <p style={styles.headerSubtitle}>
-                {isAdmin ? 'Administration & Pilotage' : 'Espace Membre'}
-              </p>
+              <h1 className="text-lg font-bold leading-tight">MBE-PIA SaaS</h1>
+              <p className="text-xs text-slate-500 dark:text-slate-400">Gestion de Tontine Intelligente</p>
             </div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-            <div style={styles.userInfo}>
-              <span style={{ fontWeight: '600', color: '#1e293b' }}>
-                {currentUser?.nom || session.user.email}
-              </span>
-              <span style={isAdmin ? styles.adminRoleBadge : styles.memberRoleBadge}>
-                {userRole}
-              </span>
-            </div>
-            <button onClick={handleLogout} style={styles.logoutBtn}>
-              Déconnexion
+
+          <div className="flex items-center gap-4">
+            <button onClick={() => setDarkMode(!darkMode)} className="p-2 text-slate-500 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-700">
+              {darkMode ? <Sun size={20} className="text-yellow-400" /> : <Moon size={20} />}
+            </button>
+            <button onClick={() => supabase.auth.signOut()} className="btn-secondary text-xs px-3 py-2 flex items-center gap-2">
+              <LogOut size={16} /> Déconnexion
             </button>
           </div>
         </div>
       </header>
 
-      {/* NAVIGATION SECONDAIRE */}
-      <div style={styles.navBar}>
-        <div style={styles.navContent}>
-          <button
-            onClick={() => setActiveTab('dashboard')}
-            style={activeTab === 'dashboard' ? styles.navTabActive : styles.navTab}
-          >
-            📊 Tableau de Bord
+      {/* Navigation Tabs */}
+      <div className="bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700">
+        <div className="max-w-7xl mx-auto px-6 flex gap-8">
+          <button onClick={() => setActiveTab('dashboard')} className={`py-4 text-sm font-semibold border-b-2 flex items-center gap-2 ${activeTab === 'dashboard' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-slate-500'}`}>
+            <TrendingUp size={18} /> Tableau de Bord
           </button>
-          <button
-            onClick={() => setActiveTab('membres')}
-            style={activeTab === 'membres' ? styles.navTabActive : styles.navTab}
-          >
-            👥 Membres ({membres.length})
+          <button onClick={() => setActiveTab('membres')} className={`py-4 text-sm font-semibold border-b-2 flex items-center gap-2 ${activeTab === 'membres' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-slate-500'}`}>
+            <Users size={18} /> Membres ({membres.length})
           </button>
-          <button
-            onClick={() => setActiveTab('cotisations')}
-            style={activeTab === 'cotisations' ? styles.navTabActive : styles.navTab}
-          >
-            💰 Cotisations & Prêts
+          <button onClick={() => setActiveTab('finances')} className={`py-4 text-sm font-semibold border-b-2 flex items-center gap-2 ${activeTab === 'finances' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-slate-500'}`}>
+            <Wallet size={18} /> Cotisations & Prêts
           </button>
         </div>
       </div>
 
-      <main style={styles.mainContainer}>
-        {errorMessage && <div style={styles.errorBanner}>⚠️ {errorMessage}</div>}
-        {successMessage && <div style={styles.successBanner}>✅ {successMessage}</div>}
-
-        {/* TAB 1: DASHBOARD / METRIQUES */}
+      {/* Main Content */}
+      <main className="max-w-7xl mx-auto px-6 py-8">
         {activeTab === 'dashboard' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            <div style={styles.statsGrid}>
-              <div style={styles.statCard}>
-                <span style={styles.statLabel}>Membres Inscrits</span>
-                <span style={styles.statValue}>{membres.length}</span>
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+              <div className="p-6 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm">
+                <span className="text-xs font-semibold text-slate-400 uppercase">Membres Actifs</span>
+                <div className="text-3xl font-extrabold mt-2">{membres.length}</div>
               </div>
-              <div style={styles.statCard}>
-                <span style={styles.statLabel}>Cotisations Prévisionnelles</span>
-                <span style={styles.statValue}>{totalCotisationsMensuelles.toLocaleString()} FCFA</span>
+              <div className="p-6 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm">
+                <span className="text-xs font-semibold text-slate-400 uppercase">Cotisations Totales</span>
+                <div className="text-3xl font-extrabold text-emerald-600 mt-2">{totalCotisations.toLocaleString()} FCFA</div>
               </div>
-              <div style={styles.statCard}>
-                <span style={styles.statLabel}>Groupes de Tontine</span>
-                <span style={styles.statValue}>1 Actif</span>
+              <div className="p-6 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm">
+                <span className="text-xs font-semibold text-slate-400 uppercase">Prêts Accordés</span>
+                <div className="text-3xl font-extrabold text-blue-600 mt-2">{totalPrets.toLocaleString()} FCFA</div>
+              </div>
+              <div className="p-6 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm">
+                <span className="text-xs font-semibold text-slate-400 uppercase">Taux de Santé</span>
+                <div className="text-3xl font-extrabold text-indigo-600 mt-2">99.2%</div>
               </div>
             </div>
-
-            <section style={styles.card}>
-              <h2 style={styles.cardTitle}>Profil de l'Utilisateur Connecté</h2>
-              <div style={styles.profileGrid}>
-                <div style={styles.profileItem}>
-                  <span style={styles.profileLabel}>Nom</span>
-                  <span style={styles.profileValue}>{currentUser?.nom || 'N/A'}</span>
-                </div>
-                <div style={styles.profileItem}>
-                  <span style={styles.profileLabel}>Identifiant / Email</span>
-                  <span style={styles.profileValue}>{session.user.email}</span>
-                </div>
-                <div style={styles.profileItem}>
-                  <span style={styles.profileLabel}>Statut d'Accès</span>
-                  <span style={styles.profileValue}>{userRole}</span>
-                </div>
-              </div>
-            </section>
           </div>
         )}
 
-        {/* TAB 2: MEMBRES & CREATION D'ACCES */}
         {activeTab === 'membres' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-            {isAdmin && (
-              <section style={styles.card}>
-                <div style={styles.cardHeader}>
-                  <div>
-                    <h2 style={styles.cardTitle}>Inscrire un Membre & Attribuer ses Accès</h2>
-                    <p style={styles.cardSubtitle}>Créer le profil adhérent et générer ses identifiants de connexion</p>
-                  </div>
-                  <span style={styles.adminTag}>Gestion Admin</span>
-                </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="p-6 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm">
+              <h3 className="text-lg font-bold mb-4">Ajouter un Adhérent</h3>
+              <form onSubmit={handleAddMembre} className="space-y-4">
+                <input type="text" placeholder="Nom complet" value={nom} onChange={(e) => setNom(e.target.value)} required className="input-field" />
+                <input type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} required className="input-field" />
+                <input type="number" placeholder="Cotisation Fixe (FCFA)" value={cotisationMensuelle} onChange={(e) => setCotisationMensuelle(e.target.value)} className="input-field" />
+                <button type="submit" className="btn-primary w-full">+ Enregistrer Membre</button>
+              </form>
+            </div>
 
-                <form onSubmit={handleAddMembreAndCreateAccess} style={styles.formGridLarge}>
-                  <div style={{ flex: '1 1 220px' }}>
-                    <label style={styles.label}>Nom complet *</label>
-                    <input
-                      type="text"
-                      placeholder="ex: Marie Fotso"
-                      value={nom}
-                      onChange={(e) => setNom(e.target.value)}
-                      required
-                      style={styles.input}
-                    />
-                  </div>
-
-                  <div style={{ flex: '1 1 200px' }}>
-                    <label style={styles.label}>Email d'accès *</label>
-                    <input
-                      type="email"
-                      placeholder="email@tontine.com"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      required
-                      style={styles.input}
-                    />
-                  </div>
-
-                  <div style={{ flex: '1 1 180px' }}>
-                    <label style={styles.label}>Mot de passe provisoire *</label>
-                    <input
-                      type="password"
-                      placeholder="Mot de passe"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      required
-                      style={styles.input}
-                    />
-                  </div>
-
-                  <div style={{ flex: '1 1 180px' }}>
-                    <label style={styles.label}>Téléphone</label>
-                    <input
-                      type="tel"
-                      placeholder="6XXXXXXXX"
-                      value={telephone}
-                      onChange={(e) => setTelephone(e.target.value)}
-                      style={styles.input}
-                    />
-                  </div>
-
-                  <div style={{ flex: '1 1 180px' }}>
-                    <label style={styles.label}>Profession</label>
-                    <input
-                      type="text"
-                      placeholder="ex: Commerçant"
-                      value={profession}
-                      onChange={(e) => setProfession(e.target.value)}
-                      style={styles.input}
-                    />
-                  </div>
-
-                  <div style={{ flex: '1 1 180px' }}>
-                    <label style={styles.label}>Cotisation Mensuelle (FCFA)</label>
-                    <input
-                      type="number"
-                      placeholder="25000"
-                      value={cotisationMensuelle}
-                      onChange={(e) => setCotisationMensuelle(e.target.value)}
-                      style={styles.input}
-                    />
-                  </div>
-
-                  <div style={{ flex: '1 1 150px' }}>
-                    <label style={styles.label}>Rôle</label>
-                    <select
-                      value={statut}
-                      onChange={(e) => setStatut(e.target.value)}
-                      style={styles.input}
-                    >
-                      <option value="actif">Membre Actif</option>
-                      <option value="Administrateur">Administrateur</option>
-                      <option value="inactif">Inactif</option>
-                    </select>
-                  </div>
-
-                  <div style={{ flex: '1 1 100%', marginTop: '8px' }}>
-                    <button
-                      type="submit"
-                      disabled={submitting}
-                      style={{ ...styles.primaryBtn, width: '100%', opacity: submitting ? 0.7 : 1 }}
-                    >
-                      {submitting ? 'Création en cours...' : '+ Inscrire et envoyer les accès'}
-                    </button>
-                  </div>
-                </form>
-              </section>
-            )}
-
-            {/* REPERTOIRE */}
-            <section style={styles.card}>
-              <div style={styles.cardHeader}>
-                <div>
-                  <h2 style={styles.cardTitle}>Répertoire Général des Membres</h2>
-                  <p style={styles.cardSubtitle}>{membres.length} adhérents enregistrés</p>
-                </div>
-              </div>
-
-              {loading ? (
-                <div style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>
-                  Chargement...
-                </div>
-              ) : membres.length === 0 ? (
-                <div style={styles.emptyState}>Aucun membre dans la tontine.</div>
-              ) : (
-                <div style={styles.listGrid}>
-                  {membres.map((m) => (
-                    <div key={m.id} style={styles.memberCard}>
-                      <div style={styles.avatar}>
-                        {m.nom ? m.nom.charAt(0).toUpperCase() : 'M'}
-                      </div>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: '600', color: '#0f172a', fontSize: '15px' }}>
-                          {m.nom}
-                        </div>
-                        <div style={{ color: '#64748b', fontSize: '13px', marginTop: '2px', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                          {m.telephone && <span>📱 {m.telephone}</span>}
-                          {m.email && <span>✉️ {m.email}</span>}
-                        </div>
-                      </div>
-                      <div style={{ textAlign: 'right' }}>
-                        <span style={m.statut === 'Administrateur' || m.statut === 'admin' ? styles.adminBadge : styles.memberBadge}>
-                          {m.statut || 'actif'}
-                        </span>
-                      </div>
+            <div className="lg:col-span-2 p-6 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm">
+              <h3 className="text-lg font-bold mb-4">Répertoire Général</h3>
+              <div className="divide-y divide-slate-100 dark:divide-slate-700">
+                {membres.map((m) => (
+                  <div key={m.id} className="py-3 flex justify-between items-center">
+                    <div>
+                      <div className="font-bold">{m.nom}</div>
+                      <div className="text-xs text-slate-400">{m.email}</div>
                     </div>
-                  ))}
-                </div>
-              )}
-            </section>
+                    <span className="badge badge-success">{m.role || 'Membre'}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         )}
 
-        {/* TAB 3: COTISATIONS & PRETS */}
-        {activeTab === 'cotisations' && (
-          <section style={styles.card}>
-            <h2 style={styles.cardTitle}>Suivi des Cotisations & Intérêts de Prêts</h2>
-            <p style={styles.cardSubtitle}>Espace de suivi financier et d'échéancier</p>
-            <div style={styles.emptyState}>
-              Les modules Stripe / Mobile Money et calcul automatique d'intérêts sont prêts à recevoir les transactions.
+        {activeTab === 'finances' && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            {/* Module Cotisations */}
+            <div className="p-6 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm space-y-4">
+              <h3 className="text-lg font-bold">Enregistrer une Cotisation</h3>
+              <form onSubmit={handleAddCotisation} className="space-y-3">
+                <select value={selectedMembreCot} onChange={(e) => setSelectedMembreCot(e.target.value)} required className="input-field">
+                  <option value="">-- Sélectionner Membre --</option>
+                  {membres.map((m) => <option key={m.id} value={m.id}>{m.nom}</option>)}
+                </select>
+                <input type="number" placeholder="Montant (FCFA)" value={montantCot} onChange={(e) => setMontantCot(e.target.value)} required className="input-field" />
+                <input type="month" value={moisCot} onChange={(e) => setMoisCot(e.target.value)} className="input-field" />
+                <button type="submit" className="btn-primary w-full">Valider Versement</button>
+              </form>
             </div>
-          </section>
+
+            {/* Module Prêts */}
+            <div className="p-6 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm space-y-4">
+              <h3 className="text-lg font-bold">Octroyer un Prêt</h3>
+              <form onSubmit={handleAddPret} className="space-y-3">
+                <select value={selectedMembrePret} onChange={(e) => setSelectedMembrePret(e.target.value)} required className="input-field">
+                  <option value="">-- Emprunteur --</option>
+                  {membres.map((m) => <option key={m.id} value={m.id}>{m.nom}</option>)}
+                </select>
+                <input type="number" placeholder="Montant du prêt (FCFA)" value={montantPret} onChange={(e) => setMontantPret(e.target.value)} required className="input-field" />
+                <button type="submit" className="btn-primary w-full bg-blue-600 hover:from-blue-700">Accorder le Prêt</button>
+              </form>
+            </div>
+          </div>
         )}
       </main>
     </div>
   );
 }
-
-const styles = {
-  centerContainer: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', backgroundColor: '#f8fafc', fontFamily: 'system-ui, sans-serif' },
-  spinner: { width: '40px', height: '40px', border: '3px solid #e2e8f0', borderTop: '3px solid #2563eb', borderRadius: '50%' },
-  authWrapper: { display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', backgroundColor: '#f1f5f9', fontFamily: 'system-ui, sans-serif' },
-  authCard: { width: '100%', maxWidth: '400px', backgroundColor: '#ffffff', padding: '32px', borderRadius: '16px', boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.05)' },
-  logoBadge: { width: '48px', height: '48px', backgroundColor: '#2563eb', color: '#fff', fontWeight: 'bold', borderRadius: '12px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px', marginBottom: '12px' },
-  authTitle: { fontSize: '22px', fontWeight: '700', color: '#0f172a', margin: '0 0 4px 0' },
-  authSubtitle: { fontSize: '13px', color: '#64748b', margin: 0 },
-  formGrid: { display: 'flex', flexDirection: 'column', gap: '16px' },
-  formGridLarge: { display: 'flex', flexWrap: 'wrap', gap: '16px', alignItems: 'flex-start' },
-  label: { display: 'block', fontSize: '13px', fontWeight: '600', color: '#334155', marginBottom: '6px' },
-  input: { width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '14px', outline: 'none', boxSizing: 'border-box' },
-  primaryBtn: { backgroundColor: '#2563eb', color: '#ffffff', border: 'none', borderRadius: '8px', padding: '12px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' },
-  dashboardWrapper: { minHeight: '100vh', backgroundColor: '#f8fafc', fontFamily: 'system-ui, sans-serif' },
-  header: { backgroundColor: '#ffffff', borderBottom: '1px solid #e2e8f0' },
-  headerContent: { maxWidth: '1000px', margin: '0 auto', padding: '16px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
-  logoBadgeSmall: { width: '36px', height: '36px', backgroundColor: '#2563eb', color: '#fff', fontWeight: 'bold', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px' },
-  headerTitle: { fontSize: '18px', fontWeight: '700', color: '#0f172a', margin: 0 },
-  headerSubtitle: { fontSize: '12px', color: '#64748b', margin: 0 },
-  userInfo: { display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px' },
-  adminRoleBadge: { backgroundColor: '#fef3c7', color: '#92400e', padding: '2px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: '600' },
-  memberRoleBadge: { backgroundColor: '#e0e7ff', color: '#3730a3', padding: '2px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: '600' },
-  logoutBtn: { backgroundColor: 'transparent', border: '1px solid #cbd5e1', color: '#64748b', padding: '6px 12px', borderRadius: '6px', fontSize: '13px', cursor: 'pointer' },
-  navBar: { backgroundColor: '#ffffff', borderBottom: '1px solid #e2e8f0' },
-  navContent: { maxWidth: '1000px', margin: '0 auto', padding: '0 24px', display: 'flex', gap: '24px' },
-  navTab: { background: 'none', border: 'none', borderBottom: '2px solid transparent', padding: '12px 4px', fontSize: '14px', color: '#64748b', cursor: 'pointer', fontWeight: '500' },
-  navTabActive: { background: 'none', border: 'none', borderBottom: '2px solid #2563eb', padding: '12px 4px', fontSize: '14px', color: '#2563eb', cursor: 'pointer', fontWeight: '600' },
-  mainContainer: { maxWidth: '1000px', margin: '24px auto', padding: '0 24px', display: 'flex', flexDirection: 'column', gap: '24px' },
-  statsGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' },
-  statCard: { backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '20px', display: 'flex', flexDirection: 'column', gap: '6px' },
-  statLabel: { fontSize: '13px', color: '#64748b', fontWeight: '500' },
-  statValue: { fontSize: '20px', fontWeight: '700', color: '#0f172a' },
-  card: { backgroundColor: '#ffffff', borderRadius: '12px', border: '1px solid #e2e8f0', padding: '24px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' },
-  cardHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px' },
-  cardTitle: { fontSize: '16px', fontWeight: '700', color: '#0f172a', margin: 0 },
-  cardSubtitle: { fontSize: '13px', color: '#64748b', margin: '4px 0 0 0' },
-  adminTag: { backgroundColor: '#eff6ff', color: '#1d4ed8', fontSize: '12px', fontWeight: '600', padding: '4px 10px', borderRadius: '20px' },
-  errorBanner: { backgroundColor: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', padding: '12px 16px', borderRadius: '8px', fontSize: '14px', marginBottom: '16px' },
-  successBanner: { backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', color: '#166534', padding: '12px 16px', borderRadius: '8px', fontSize: '14px', marginBottom: '16px' },
-  profileGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginTop: '12px' },
-  profileItem: { backgroundColor: '#f8fafc', padding: '12px 16px', borderRadius: '8px', border: '1px solid #e2e8f0' },
-  profileLabel: { display: 'block', fontSize: '12px', color: '#64748b', marginBottom: '4px' },
-  profileValue: { fontSize: '14px', fontWeight: '600', color: '#0f172a' },
-  listGrid: { display: 'flex', flexDirection: 'column', gap: '10px' },
-  memberCard: { display: 'flex', alignItems: 'center', gap: '14px', padding: '12px 16px', borderRadius: '8px', border: '1px solid #f1f5f9', backgroundColor: '#fafafa' },
-  avatar: { width: '42px', height: '42px', borderRadius: '50%', backgroundColor: '#e2e8f0', color: '#475569', fontWeight: '600', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px' },
-  adminBadge: { backgroundColor: '#fef3c7', color: '#92400e', fontSize: '11px', fontWeight: '600', padding: '2px 8px', borderRadius: '12px' },
-  memberBadge: { backgroundColor: '#dcfce7', color: '#166534', fontSize: '11px', fontWeight: '600', padding: '2px 8px', borderRadius: '12px' },
-  emptyState: { textAlign: 'center', padding: '32px', color: '#94a3b8', fontSize: '14px' }
-};
