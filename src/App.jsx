@@ -4,16 +4,16 @@ import { supabase } from './supabase/client';
 export default function App() {
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [currentUserRole, setCurrentUserRole] = useState(null);
+  const [currentUser, setCurrentUser] = useState(null);
 
-  // États membres
+  // États données
   const [membres, setMembres] = useState([]);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  // Formulaire d'ajout par l'Admin
+  // Formulaire de création de membre par l'Admin
   const [nom, setNom] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -27,7 +27,7 @@ export default function App() {
   const [authPassword, setAuthPassword] = useState('');
   const [authError, setAuthError] = useState('');
 
-  // 1. Session & Vérification des rôles
+  // 1. Gestion de la session et récupération du profil connecté
   useEffect(() => {
     if (!supabase) {
       setAuthLoading(false);
@@ -36,16 +36,16 @@ export default function App() {
 
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
-      if (session) checkUserRole(session.user);
+      if (session) fetchUserProfile(session.user);
       setAuthLoading(false);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       if (session) {
-        checkUserRole(session.user);
+        fetchUserProfile(session.user);
       } else {
-        setCurrentUserRole(null);
+        setCurrentUser(null);
       }
       setAuthLoading(false);
     });
@@ -53,21 +53,27 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  const checkUserRole = async (user) => {
+  // Récupération des informations du membre connecté depuis la DB
+  const fetchUserProfile = async (user) => {
     const { data, error } = await supabase
       .from('membres')
-      .select('statut, user_id')
+      .select('*')
       .or(`user_id.eq.${user.id},email.eq.${user.email}`)
-      .single();
+      .maybeSingle();
 
     if (!error && data) {
-      setCurrentUserRole(data.statut || 'actif');
+      setCurrentUser(data);
     } else {
-      setCurrentUserRole('Membre');
+      // Profil de secours si non trouvé dans la table membres
+      setCurrentUser({
+        email: user.email,
+        statut: 'Membre',
+        nom: user.user_metadata?.nom || 'Adhérent'
+      });
     }
   };
 
-  // 2. Chargement des membres
+  // 2. Chargement des membres de la tontine
   useEffect(() => {
     if (session) {
       fetchMembres();
@@ -107,18 +113,13 @@ export default function App() {
     await supabase.auth.signOut();
   };
 
-  // 3. Création d'un Membre + Attribution des accès (Par l'Admin)
+  // 3. Action réservée à l'Admin : Inscription d'un membre et génération des accès Auth
   const handleAddMembreAndCreateAccess = async (e) => {
     e.preventDefault();
-    const isAdmin = currentUserRole === 'Administrateur' || currentUserRole === 'admin' || currentUserRole === 'super_admin';
+    const isAdmin = currentUser?.statut === 'Administrateur' || currentUser?.statut === 'admin' || currentUser?.statut === 'super_admin';
 
     if (!isAdmin) {
-      alert("Seul un Administrateur peut créer un membre et lui attribuer des accès.");
-      return;
-    }
-
-    if (!nom.trim() || !email.trim() || !password.trim()) {
-      setErrorMessage("Le nom, l'email et le mot de passe provisoire sont obligatoires pour générer les accès.");
+      alert("Seul un Administrateur peut inscrire un membre.");
       return;
     }
 
@@ -127,7 +128,7 @@ export default function App() {
     setSubmitting(true);
 
     try {
-      // 1. Création de l'accès Auth Supabase
+      // 1. Inscription dans Supabase Auth
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: email.trim(),
         password: password.trim(),
@@ -136,11 +137,11 @@ export default function App() {
         }
       });
 
-      if (authError) throw new Error(`Auth Error: ${authError.message}`);
+      if (authError) throw new Error(`Erreur d'accès : ${authError.message}`);
 
       const createdUserId = authData.user ? authData.user.id : null;
 
-      // 2. Insertion dans la table `membres` liée avec user_id
+      // 2. Création de la fiche dans la table membres
       const nouveauMembre = {
         user_id: createdUserId,
         nom,
@@ -156,13 +157,11 @@ export default function App() {
         .insert([nouveauMembre])
         .select();
 
-      if (dbError) throw new Error(`Database Error: ${dbError.message}`);
+      if (dbError) throw new Error(`Erreur Base de données : ${dbError.message}`);
 
       if (data && data.length > 0) {
         setMembres((prev) => [data[0], ...prev]);
-        setSuccessMessage(`Membre "${nom}" créé avec succès ! Identifiants d'accès générés.`);
-        
-        // Reset formulaire
+        setSuccessMessage(`Compte créé avec succès pour ${nom}. Les identifiants sont actifs.`);
         setNom('');
         setEmail('');
         setPassword('');
@@ -182,12 +181,12 @@ export default function App() {
     return (
       <div style={styles.centerContainer}>
         <div style={styles.spinner}></div>
-        <p style={{ color: '#64748b', marginTop: '16px' }}>Chargement de MBE-PIA...</p>
+        <p style={{ color: '#64748b', marginTop: '16px' }}>Vérification des droits d'accès...</p>
       </div>
     );
   }
 
-  // ÉCRAN DE CONNEXION (Pour tout membre ou admin disposant d'un compte)
+  // --- ÉCRAN 1 : FORMULAIRE DE CONNEXION ---
   if (!session) {
     return (
       <div style={styles.authWrapper}>
@@ -195,7 +194,7 @@ export default function App() {
           <div style={{ textAlign: 'center', marginBottom: '28px' }}>
             <div style={styles.logoBadge}>MBE</div>
             <h1 style={styles.authTitle}>MBE-PIA</h1>
-            <p style={styles.authSubtitle}>Connectez-vous avec les identifiants fournis par l'administrateur</p>
+            <p style={styles.authSubtitle}>Plateforme de Gestion de Tontine</p>
           </div>
 
           {authError && <div style={styles.errorBanner}>⚠️ {authError}</div>}
@@ -205,7 +204,7 @@ export default function App() {
               <label style={styles.label}>Adresse e-mail</label>
               <input
                 type="email"
-                placeholder="nom@exemple.com"
+                placeholder="votre.email@exemple.com"
                 value={authEmail}
                 onChange={(e) => setAuthEmail(e.target.value)}
                 required
@@ -228,7 +227,7 @@ export default function App() {
               disabled={submitting}
               style={{ ...styles.primaryBtn, opacity: submitting ? 0.7 : 1 }}
             >
-              {submitting ? 'Connexion...' : 'Se connecter'}
+              {submitting ? 'Connexion en cours...' : 'Se connecter'}
             </button>
           </form>
         </div>
@@ -236,25 +235,31 @@ export default function App() {
     );
   }
 
-  // DASHBOARD APPRÈS CONNEXION
-  const isAdmin = currentUserRole === 'Administrateur' || currentUserRole === 'admin' || currentUserRole === 'super_admin';
+  // --- ÉCRAN 2 : APPLICATION SELON LE RÔLE DE L'UTILISATEUR ---
+  const userRole = currentUser?.statut || 'Membre';
+  const isAdmin = userRole === 'Administrateur' || userRole === 'admin' || userRole === 'super_admin';
 
   return (
     <div style={styles.dashboardWrapper}>
+      {/* BARRE DE NAVIGATION COMMUNE */}
       <header style={styles.header}>
         <div style={styles.headerContent}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <div style={styles.logoBadgeSmall}>MBE</div>
             <div>
               <h1 style={styles.headerTitle}>MBE-PIA</h1>
-              <p style={styles.headerSubtitle}>Gestion de Tontine</p>
+              <p style={styles.headerSubtitle}>
+                {isAdmin ? 'Espace Administration' : 'Espace Adhérent'}
+              </p>
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
             <div style={styles.userInfo}>
-              <span style={{ fontWeight: '600', color: '#1e293b' }}>{session.user.email}</span>
+              <span style={{ fontWeight: '600', color: '#1e293b' }}>
+                {currentUser?.nom || session.user.email}
+              </span>
               <span style={isAdmin ? styles.adminRoleBadge : styles.memberRoleBadge}>
-                {currentUserRole || 'Membre'}
+                {userRole}
               </span>
             </div>
             <button onClick={handleLogout} style={styles.logoutBtn}>
@@ -268,142 +273,168 @@ export default function App() {
         {errorMessage && <div style={styles.errorBanner}>⚠️ {errorMessage}</div>}
         {successMessage && <div style={styles.successBanner}>✅ {successMessage}</div>}
 
-        {/* SECTION DÉDIÉE SUPER ADMIN / ADMIN : CRÉATION MEMBRE + COMPTE AUTH */}
+        {/* CONTENU CONDITIONNEL EN FONCTION DU RÔLE */}
         {isAdmin ? (
+          /* --- VUE ADMINISTRATEUR / SUPER ADMIN --- */
+          <>
+            <section style={styles.card}>
+              <div style={styles.cardHeader}>
+                <div>
+                  <h2 style={styles.cardTitle}>Créer un Membre & Générer ses Accès</h2>
+                  <p style={styles.cardSubtitle}>Ajouter un adhérent à la tontine et configurer ses identifiants</p>
+                </div>
+                <span style={styles.adminTag}>Super Admin</span>
+              </div>
+
+              <form onSubmit={handleAddMembreAndCreateAccess} style={styles.formGridLarge}>
+                <div style={{ flex: '1 1 220px' }}>
+                  <label style={styles.label}>Nom complet *</label>
+                  <input
+                    type="text"
+                    placeholder="Nom du membre"
+                    value={nom}
+                    onChange={(e) => setNom(e.target.value)}
+                    required
+                    style={styles.input}
+                  />
+                </div>
+
+                <div style={{ flex: '1 1 200px' }}>
+                  <label style={styles.label}>Email d'accès (Identifiant) *</label>
+                  <input
+                    type="email"
+                    placeholder="email@tontine.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                    style={styles.input}
+                  />
+                </div>
+
+                <div style={{ flex: '1 1 180px' }}>
+                  <label style={styles.label}>Mot de passe provisoire *</label>
+                  <input
+                    type="password"
+                    placeholder="Mot de passe"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    style={styles.input}
+                  />
+                </div>
+
+                <div style={{ flex: '1 1 180px' }}>
+                  <label style={styles.label}>Téléphone</label>
+                  <input
+                    type="tel"
+                    placeholder="6XXXXXXXX"
+                    value={telephone}
+                    onChange={(e) => setTelephone(e.target.value)}
+                    style={styles.input}
+                  />
+                </div>
+
+                <div style={{ flex: '1 1 180px' }}>
+                  <label style={styles.label}>Profession</label>
+                  <input
+                    type="text"
+                    placeholder="Profession"
+                    value={profession}
+                    onChange={(e) => setProfession(e.target.value)}
+                    style={styles.input}
+                  />
+                </div>
+
+                <div style={{ flex: '1 1 180px' }}>
+                  <label style={styles.label}>Cotisation Mensuelle (FCFA)</label>
+                  <input
+                    type="number"
+                    placeholder="25000"
+                    value={cotisationMensuelle}
+                    onChange={(e) => setCotisationMensuelle(e.target.value)}
+                    style={styles.input}
+                  />
+                </div>
+
+                <div style={{ flex: '1 1 150px' }}>
+                  <label style={styles.label}>Rôle attribué</label>
+                  <select
+                    value={statut}
+                    onChange={(e) => setStatut(e.target.value)}
+                    style={styles.input}
+                  >
+                    <option value="actif">Membre Actif</option>
+                    <option value="Administrateur">Administrateur</option>
+                    <option value="inactif">Inactif</option>
+                  </select>
+                </div>
+
+                <div style={{ flex: '1 1 100%', marginTop: '8px' }}>
+                  <button
+                    type="submit"
+                    disabled={submitting}
+                    style={{ ...styles.primaryBtn, width: '100%', opacity: submitting ? 0.7 : 1 }}
+                  >
+                    {submitting ? 'Création du compte...' : '+ Créer l\'accès du membre'}
+                  </button>
+                </div>
+              </form>
+            </section>
+          </>
+        ) : (
+          /* --- VUE MEMBRE (ACCÈS RESTREINT) --- */
           <section style={styles.card}>
             <div style={styles.cardHeader}>
               <div>
-                <h2 style={styles.cardTitle}>Créer un Membre & Générer ses Accès</h2>
-                <p style={styles.cardSubtitle}>Inscrire l'adhérent et définir son identifiant de connexion</p>
+                <h2 style={styles.cardTitle}>Mon Espace Membre</h2>
+                <p style={styles.cardSubtitle}>Vos informations d'adhérent</p>
               </div>
-              <span style={styles.adminTag}>Espace Administrateur</span>
             </div>
 
-            <form onSubmit={handleAddMembreAndCreateAccess} style={styles.formGridLarge}>
-              <div style={{ flex: '1 1 220px' }}>
-                <label style={styles.label}>Nom complet *</label>
-                <input
-                  type="text"
-                  placeholder="ex: Kouam Franck"
-                  value={nom}
-                  onChange={(e) => setNom(e.target.value)}
-                  required
-                  style={styles.input}
-                />
+            <div style={styles.profileGrid}>
+              <div style={styles.profileItem}>
+                <span style={styles.profileLabel}>Nom complet</span>
+                <span style={styles.profileValue}>{currentUser?.nom || 'N/A'}</span>
               </div>
-
-              <div style={{ flex: '1 1 200px' }}>
-                <label style={styles.label}>Email d'accès (Identifiant) *</label>
-                <input
-                  type="email"
-                  placeholder="nom@exemple.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  style={styles.input}
-                />
+              <div style={styles.profileItem}>
+                <span style={styles.profileLabel}>Email d'accès</span>
+                <span style={styles.profileValue}>{session.user.email}</span>
               </div>
-
-              <div style={{ flex: '1 1 180px' }}>
-                <label style={styles.label}>Mot de passe initial *</label>
-                <input
-                  type="password"
-                  placeholder="Mot de passe provisoire"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  style={styles.input}
-                />
+              <div style={styles.profileItem}>
+                <span style={styles.profileLabel}>Téléphone</span>
+                <span style={styles.profileValue}>{currentUser?.telephone || 'Non renseigné'}</span>
               </div>
-
-              <div style={{ flex: '1 1 180px' }}>
-                <label style={styles.label}>Téléphone</label>
-                <input
-                  type="tel"
-                  placeholder="ex: 699000000"
-                  value={telephone}
-                  onChange={(e) => setTelephone(e.target.value)}
-                  style={styles.input}
-                />
+              <div style={styles.profileItem}>
+                <span style={styles.profileLabel}>Cotisation mensuelle</span>
+                <span style={styles.profileValue}>
+                  {currentUser?.cotisation_mensuelle ? `${currentUser.cotisation_mensuelle.toLocaleString()} FCFA` : 'N/A'}
+                </span>
               </div>
-
-              <div style={{ flex: '1 1 180px' }}>
-                <label style={styles.label}>Profession</label>
-                <input
-                  type="text"
-                  placeholder="ex: Commerçant"
-                  value={profession}
-                  onChange={(e) => setProfession(e.target.value)}
-                  style={styles.input}
-                />
-              </div>
-
-              <div style={{ flex: '1 1 180px' }}>
-                <label style={styles.label}>Cotisation Mensuelle (FCFA)</label>
-                <input
-                  type="number"
-                  placeholder="ex: 25000"
-                  value={cotisationMensuelle}
-                  onChange={(e) => setCotisationMensuelle(e.target.value)}
-                  style={styles.input}
-                />
-              </div>
-
-              <div style={{ flex: '1 1 150px' }}>
-                <label style={styles.label}>Rôle / Statut</label>
-                <select
-                  value={statut}
-                  onChange={(e) => setStatut(e.target.value)}
-                  style={styles.input}
-                >
-                  <option value="actif">Membre Actif</option>
-                  <option value="Administrateur">Administrateur</option>
-                  <option value="inactif">Inactif</option>
-                </select>
-              </div>
-
-              <div style={{ flex: '1 1 100%', marginTop: '8px' }}>
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  style={{ ...styles.primaryBtn, width: '100%', opacity: submitting ? 0.7 : 1 }}
-                >
-                  {submitting ? 'Création du compte...' : '+ Créer le membre et lui attribuer ses accès'}
-                </button>
-              </div>
-            </form>
+            </div>
           </section>
-        ) : (
-          <div style={styles.infoBanner}>
-            💡 Vous êtes connecté en tant que <strong>Membre</strong>. Seul l'Administrateur peut inscrire de nouveaux adhérents et leur fournir leurs accès.
-          </div>
         )}
 
-        {/* LISTE DES MEMBRES DE LA TONTINE */}
+        {/* LISTE DES MEMBRES - ACCESSIBLE À TOUS LES RÔLES */}
         <section style={styles.card}>
           <div style={styles.cardHeader}>
             <div>
-              <h2 style={styles.cardTitle}>Répertoire des Membres</h2>
+              <h2 style={styles.cardTitle}>Répertoire des Membres de la Tontine</h2>
               <p style={styles.cardSubtitle}>{membres.length} membres enregistrés</p>
             </div>
           </div>
 
           {loading ? (
             <div style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>
-              Chargement des données...
+              Chargement de la liste...
             </div>
           ) : membres.length === 0 ? (
-            <div style={styles.emptyState}>Aucun membre enregistré dans la base de données.</div>
+            <div style={styles.emptyState}>Aucun membre enregistré dans la tontine.</div>
           ) : (
             <div style={styles.listGrid}>
               {membres.map((m) => (
                 <div key={m.id} style={styles.memberCard}>
                   <div style={styles.avatar}>
-                    {m.avatar ? (
-                      <img src={m.avatar} alt={m.nom} style={{ width: '100%', height: '100%', borderRadius: '50%' }} />
-                    ) : (
-                      m.nom ? m.nom.charAt(0).toUpperCase() : 'M'
-                    )}
+                    {m.nom ? m.nom.charAt(0).toUpperCase() : 'M'}
                   </div>
 
                   <div style={{ flex: 1 }}>
@@ -423,7 +454,7 @@ export default function App() {
                     </span>
                     {m.cotisation_mensuelle > 0 && (
                       <small style={{ color: '#059669', fontWeight: '600', fontSize: '12px' }}>
-                        {m.cotisation_mensuelle.toLocaleString()} FCFA / mois
+                        {m.cotisation_mensuelle.toLocaleString()} FCFA / mo.
                       </small>
                     )}
                   </div>
@@ -438,7 +469,7 @@ export default function App() {
 }
 
 const styles = {
-  centerContainer: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', backgroundColor: '#f8fafc', fontFamily: 'sans-serif' },
+  centerContainer: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', backgroundColor: '#f8fafc', fontFamily: 'system-ui, sans-serif' },
   spinner: { width: '40px', height: '40px', border: '3px solid #e2e8f0', borderTop: '3px solid #2563eb', borderRadius: '50%' },
   authWrapper: { display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', backgroundColor: '#f1f5f9', fontFamily: 'system-ui, sans-serif' },
   authCard: { width: '100%', maxWidth: '400px', backgroundColor: '#ffffff', padding: '32px', borderRadius: '16px', boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.05)' },
@@ -466,9 +497,12 @@ const styles = {
   cardTitle: { fontSize: '16px', fontWeight: '700', color: '#0f172a', margin: 0 },
   cardSubtitle: { fontSize: '13px', color: '#64748b', margin: '4px 0 0 0' },
   adminTag: { backgroundColor: '#eff6ff', color: '#1d4ed8', fontSize: '12px', fontWeight: '600', padding: '4px 10px', borderRadius: '20px' },
-  infoBanner: { backgroundColor: '#f1f5f9', border: '1px solid #cbd5e1', padding: '14px 18px', borderRadius: '8px', fontSize: '14px', color: '#334155' },
   errorBanner: { backgroundColor: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', padding: '12px 16px', borderRadius: '8px', fontSize: '14px', marginBottom: '16px' },
   successBanner: { backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', color: '#166534', padding: '12px 16px', borderRadius: '8px', fontSize: '14px', marginBottom: '16px' },
+  profileGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginTop: '12px' },
+  profileItem: { backgroundColor: '#f8fafc', padding: '12px 16px', borderRadius: '8px', border: '1px solid #e2e8f0' },
+  profileLabel: { display: 'block', fontSize: '12px', color: '#64748b', marginBottom: '4px' },
+  profileValue: { fontSize: '14px', fontWeight: '600', color: '#0f172a' },
   listGrid: { display: 'flex', flexDirection: 'column', gap: '10px' },
   memberCard: { display: 'flex', alignItems: 'center', gap: '14px', padding: '12px 16px', borderRadius: '8px', border: '1px solid #f1f5f9', backgroundColor: '#fafafa' },
   avatar: { width: '42px', height: '42px', borderRadius: '50%', backgroundColor: '#e2e8f0', color: '#475569', fontWeight: '600', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px' },
